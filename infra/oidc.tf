@@ -30,8 +30,10 @@ resource "aws_iam_role" "github_actions_deploy" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            # ONLY this exact repo, ONLY the main branch, may assume this role
-            "token.actions.githubusercontent.com:sub" = "repo:shambhavimaya-code/gha-node-ci-pipeline:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:shambhavimaya-code/gha-node-ci-pipeline:ref:refs/heads/main",
+              "repo:shambhavimaya-code/gha-node-ci-pipeline:environment:production"
+            ]
           }
         }
       }
@@ -56,13 +58,13 @@ resource "aws_iam_role_policy" "github_actions_deploy_permissions" {
         Resource = "*"
       },
       {
-        Effect = "Allow"
-        Action = ["ec2:DescribeInstances"]
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances"]
         Resource = "*"
       },
       {
-        Effect = "Allow"
-        Action = ["s3:PutObject", "s3:GetObject"]
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
         Resource = "arn:aws:s3:::tf-state-gha-node-ci-pipeline-shambhavimaya-code/releases/*"
       }
     ]
