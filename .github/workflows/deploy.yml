@@ -1,0 +1,69 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::579976739594:role/gha-node-ci-pipeline-deploy-role
+          aws-region: us-west-1
+
+      - name: Look up EC2 instance by tag
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=gha-node-ci-pipeline-app" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" --output text)
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_ENV"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_ENV"
+
+      - name: Package app for deployment
+        run: tar -czf app.tar.gz src/ package.json package-lock.json
+
+      - name: Upload package to S3
+        run: aws s3 cp app.tar.gz s3://tf-state-gha-node-ci-pipeline-shambhavimaya-code/releases/app.tar.gz
+
+      - name: Deploy via SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":[
+              "aws s3 cp s3://tf-state-gha-node-ci-pipeline-shambhavimaya-code/releases/app.tar.gz /opt/app/app.tar.gz",
+              "tar -xzf /opt/app/app.tar.gz -C /opt/app",
+              "cd /opt/app && npm ci --omit=dev",
+              "systemctl restart gha-app.service"
+            ]}' \
+            --query "Command.CommandId" --output text)
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for SSM command and check result
+        run: |
+          sleep 8
+          aws ssm get-command-invocation \
+            --command-id "${{ env.command_id }}" \
+            --instance-id "${{ env.instance_id }}" \
+            --query "{Status:Status,StdOut:StandardOutputContent,StdErr:StandardErrorContent}"
+
+      - name: Verify app is responding
+        run: |
+          sleep 5
+          curl -f http://${{ env.public_ip }} || (echo "App did not respond on port 80" && exit 1)
