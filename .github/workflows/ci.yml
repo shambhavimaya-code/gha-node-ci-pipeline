@@ -1,0 +1,55 @@
+name: CI
+
+# WHEN this workflow runs
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+
+# Avoid piling up redundant runs when you push multiple commits quickly
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read # least-privilege default; widen only if a step needs more
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Matrix build: run the same job across multiple versions in parallel
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm" # caches node_modules between runs automatically
+
+      - name: Install dependencies
+        run: npm ci # 'ci' not 'install' — deterministic, uses package-lock.json
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Upload test results
+        if: always() # upload even if tests failed, so you can inspect them
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-node-${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results/
+          retention-days: 7
